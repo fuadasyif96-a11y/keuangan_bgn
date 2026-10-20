@@ -1,0 +1,1126 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BGN AL GHAZALI - Keuangan</title>
+    
+    <!-- React & ReactDOM (v17 for stability) -->
+    <script src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot, doc, updateDoc, addDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        let fbConfig = {};
+        try { fbConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {}; } catch(e) {}
+
+        if (Object.keys(fbConfig).length > 0) {
+            try {
+                const app = initializeApp(fbConfig);
+                const auth = getAuth(app);
+                const db = getFirestore(app);
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+                window.firebaseAPI = { auth, db, appId, collection, onSnapshot, doc, updateDoc, addDoc, deleteDoc };
+
+                const initialToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                if (initialToken) {
+                    signInWithCustomToken(auth, initialToken)
+                        .then(() => window.dispatchEvent(new Event('firebase-ready')))
+                        .catch((err) => {
+                            console.warn("Auth token warning, falling back to local storage:", err);
+                            window.firebaseFallback = true;
+                            window.dispatchEvent(new Event('firebase-ready'));
+                        });
+                } else {
+                    signInAnonymously(auth)
+                        .then(() => window.dispatchEvent(new Event('firebase-ready')))
+                        .catch((err) => {
+                            console.warn("Anonymous auth warning, falling back to local storage:", err);
+                            window.firebaseFallback = true;
+                            window.dispatchEvent(new Event('firebase-ready'));
+                        });
+                }
+            } catch (err) {
+                console.error("Firebase init failed:", err);
+                window.firebaseFallback = true;
+                window.dispatchEvent(new Event('firebase-ready'));
+            }
+        } else {
+            window.firebaseFallback = true;
+            window.dispatchEvent(new Event('firebase-ready'));
+        }
+    </script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            primary: '#ffffff', // Pure White for light theme
+                            primaryHover: '#f1f5f9',
+                            gold: '#d97706',    
+                            goldHover: '#b45309',
+                            bg: '#f8fafc',      // Light gray background
+                            card: '#ffffff',    
+                            text: '#1e293b',    // Main dark text
+                            muted: '#64748b',   
+                            border: '#e2e8f0',  
+                            sidebar: '#0f172a', // Dark navy for sidebar contrast
+                            dark: '#0f172a'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        serif: ['Merriweather', 'serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Merriweather:wght@700&display=swap');
+        
+        body { background-color: #f8fafc; color: #1e293b; margin: 0; padding: 0; overflow-x: hidden; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+
+        @media print {
+            body { background: white !important; color: black !important; }
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            .print-break-inside-avoid { break-inside: avoid; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const DAFTAR_BANK = [
+            "BCA", "BCA Syariah", "BNI", "BNI Syariah", "BRI", "BSI (Bank Syariah Indonesia)", 
+            "Bank Mandiri", "Bank Mega", "Bank Mega Syariah", "Bank Muamalat", "Bank Permata", 
+            "CIMB Niaga", "CIMB Niaga Syariah", "Danamon", "OCBC NISP", "Panin Bank", 
+            "Bank Kaltimtara", "BJB", "BJB Syariah", "Bank BTN", "Bank BTN Syariah", "BTPN"
+        ];
+
+        const SPPG_LIST = [
+            "SPPG Sempaja Utara", "SPPG Samarinda Ulu", "SPPG Berau", 
+            "SPPG Sambutan", "SPPG Sungai Pinang Dalam 2", "SPPG Kota Bangun", "SPPG Palaran"
+        ];
+
+        const formatRupiah = (angka) => {
+            if (!angka) return "Rp 0";
+            return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(angka);
+        };
+
+        const CustomDialog = ({ dialog, onClose }) => {
+            if (!dialog) return null;
+            return (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-brand-dark/50 backdrop-blur-sm p-4 animate-fade-in no-print">
+                    <div className="bg-white border border-brand-border rounded-2xl max-w-sm w-full shadow-2xl p-6 text-center">
+                        <div className={`w-16 h-16 rounded-full mx-auto mb-4 flex items-center justify-center ${dialog.type === 'confirm' ? 'bg-amber-100 text-amber-500' : 'bg-blue-100 text-blue-500'}`}>
+                            {dialog.type === 'confirm' ? (
+                                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                            ) : (
+                                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            )}
+                        </div>
+                        <h3 className="text-lg font-bold text-brand-text mb-2">{dialog.type === 'confirm' ? 'Konfirmasi' : 'Informasi'}</h3>
+                        <p className="text-sm text-brand-muted mb-6">{dialog.message}</p>
+                        <div className="flex justify-center gap-3">
+                            {dialog.type === 'confirm' && (
+                                <button onClick={onClose} className="px-5 py-2.5 rounded-xl text-sm font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors">Batal</button>
+                            )}
+                            <button onClick={() => { dialog.onConfirm && dialog.onConfirm(); onClose(); }} 
+                                className={`px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-colors ${dialog.type === 'confirm' ? 'bg-red-500 hover:bg-red-600' : 'bg-brand-gold hover:bg-brand-goldHover'}`}>
+                                {dialog.type === 'confirm' ? 'Ya, Lanjutkan' : 'Mengerti'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const DashboardView = ({ dbInvoices, currentUser }) => {
+            const chartRef = useRef(null);
+            const chartInstance = useRef(null);
+
+            useEffect(() => {
+                if (chartInstance.current) chartInstance.current.destroy();
+                if (!chartRef.current) return;
+                
+                const ctx = chartRef.current.getContext('2d');
+                const sppgData = SPPG_LIST.map(sppg => {
+                    return dbInvoices.filter(inv => inv.sppg === sppg && inv.status === 'Sudah Proses')
+                                     .reduce((sum, inv) => sum + inv.nominal, 0);
+                });
+
+                chartInstance.current = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: SPPG_LIST,
+                        datasets: [{
+                            label: 'Total Pembayaran Selesai (Rp)',
+                            data: sppgData,
+                            backgroundColor: '#0f172a',
+                            borderRadius: 6,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { labels: { color: '#1e293b' } } },
+                        scales: {
+                            y: { grid: { color: '#e2e8f0' }, ticks: { color: '#64748b' } },
+                            x: { grid: { display: false }, ticks: { color: '#64748b' } }
+                        }
+                    }
+                });
+                return () => { if (chartInstance.current) chartInstance.current.destroy(); }
+            }, [dbInvoices]);
+
+            const totalBelumProses = dbInvoices.filter(i => i.status !== 'Sudah Proses').reduce((acc, curr) => acc + curr.nominal, 0);
+            const totalSudahProses = dbInvoices.filter(i => i.status === 'Sudah Proses').reduce((acc, curr) => acc + curr.nominal, 0);
+
+            return (
+                <div className="animate-fade-in space-y-6">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 bg-white p-6 rounded-2xl border border-brand-border shadow-sm relative overflow-hidden">
+                        <div className="flex items-center space-x-5 relative z-10">
+                            <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Logo_Badan_Gizi_Nasional.png/600px-Logo_Badan_Gizi_Nasional.png" 
+                                 onError={(e)=>{e.target.src='https://placehold.co/150x150/0f172a/ffffff?text=BGN'}}
+                                 alt="Logo BGN" className="w-16 h-16 md:w-20 md:h-20 object-contain drop-shadow-md" />
+                            <div>
+                                <h2 className="text-2xl md:text-3xl font-serif font-bold text-brand-dark">Dashboard Keuangan</h2>
+                                <p className="text-brand-muted mt-1 font-medium text-sm md:text-base">Badan Gizi Nasional - Al Ghazali</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="bg-white p-6 rounded-2xl border-l-4 border-l-brand-gold shadow-md">
+                            <p className="text-brand-muted mb-1 text-sm font-semibold">Total Tagihan (Belum Proses)</p>
+                            <h3 className="text-2xl md:text-3xl font-bold text-brand-text break-words">{formatRupiah(totalBelumProses)}</h3>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl border-l-4 border-l-green-500 shadow-md">
+                            <p className="text-brand-muted mb-1 text-sm font-semibold">Total Pembayaran Selesai</p>
+                            <h3 className="text-2xl md:text-3xl font-bold text-green-600 break-words">{formatRupiah(totalSudahProses)}</h3>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl border-l-4 border-l-brand-dark shadow-md">
+                            <p className="text-brand-muted mb-1 text-sm font-semibold">Jumlah SPPG Aktif</p>
+                            <h3 className="text-2xl md:text-3xl font-bold text-brand-dark">{SPPG_LIST.length} Unit</h3>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-2xl border border-brand-border shadow-md h-80 relative">
+                        <h3 className="text-base md:text-lg font-bold text-brand-dark mb-4">Grafik Pembayaran Selesai per SPPG</h3>
+                        <div className="absolute inset-0 top-16 p-4 pb-6">
+                            <canvas ref={chartRef}></canvas>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const InputTagihanView = ({ dbSuppliers, dbRekenings, setActiveMenu, currentUser, onAddData, onShowAlert }) => {
+            const defaultSppg = currentUser.role === 'Operator' ? currentUser.sppg : (SPPG_LIST[0] || '');
+            const [tanggal, setTanggal] = useState('');
+            const [sppg, setSppg] = useState(defaultSppg);
+            const [supplier, setSupplier] = useState('');
+            const [jenisBahan, setJenisBahan] = useState(['Operasional']);
+            const [namaBahan, setNamaBahan] = useState('');
+            const [rekening, setRekening] = useState('');
+            const [nominalText, setNominalText] = useState('');
+            const [nominal, setNominal] = useState(0);
+            
+            const [draftInvoices, setDraftInvoices] = useState([]);
+
+            const handleJenisBahanChange = (jenis) => {
+                const updated = jenisBahan.includes(jenis) ? jenisBahan.filter(item => item !== jenis) : [...jenisBahan, jenis];
+                setJenisBahan(updated);
+            };
+
+            const handleNominalChange = (e) => {
+                const rawValue = e.target.value.replace(/[^0-9]/g, '');
+                setNominalText(rawValue ? new Intl.NumberFormat('id-ID').format(rawValue) : '');
+                setNominal(parseInt(rawValue, 10) || 0);
+            };
+
+            const handleTambahDraft = (e) => {
+                e.preventDefault();
+                if(!tanggal || !sppg || !supplier || jenisBahan.length === 0 || !nominal || !rekening) {
+                    onShowAlert("Mohon lengkapi semua data wajib pada form!");
+                    return;
+                }
+                const newDraft = { id: Date.now() + Math.random(), tanggal, sppg, supplier, jenisBahan, namaBahan, rekening, nominal, status: 'Belum Proses' };
+                setDraftInvoices([...draftInvoices, newDraft]);
+                setNamaBahan('');
+                setNominalText('');
+                setNominal(0);
+            };
+
+            const handleKirimSemua = async () => {
+                if (draftInvoices.length === 0) return;
+                for (const draft of draftInvoices) {
+                    const { id, ...dataToSave } = draft;
+                    await onAddData('invoices', dataToSave);
+                }
+                setDraftInvoices([]);
+                onShowAlert("Berhasil! Semua nota tagihan telah dikirim ke Cloud.");
+                setActiveMenu('proses');
+            };
+
+            return (
+                <div className="animate-fade-in grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+                    <div className="bg-white border border-brand-border rounded-2xl p-5 md:p-6 shadow-md">
+                        <h2 className="text-xl font-serif font-bold text-brand-dark mb-6 border-b pb-3">Input Tagihan Nota</h2>
+                        <form onSubmit={handleTambahDraft} className="space-y-5">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-semibold text-brand-text mb-1">Tanggal Nota</label>
+                                    <input type="date" value={tanggal} onChange={e => setTanggal(e.target.value)} className="w-full bg-brand-bg border rounded-lg p-2.5 text-brand-text outline-none focus:border-brand-dark focus:ring-1 focus:ring-brand-dark" required/>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-semibold text-brand-text mb-1">Pilih SPPG</label>
+                                    {currentUser.role === 'Operator' ? (
+                                        <input type="text" value={currentUser.sppg} disabled className="w-full bg-slate-100 border rounded-lg p-2.5 text-brand-dark font-bold cursor-not-allowed"/>
+                                    ) : (
+                                        <select value={sppg} onChange={e => setSppg(e.target.value)} className="w-full bg-brand-bg border rounded-lg p-2.5 text-brand-text outline-none focus:border-brand-dark focus:ring-1 focus:ring-brand-dark" required>
+                                            <option value="">-- Pilih SPPG --</option>
+                                            {SPPG_LIST.map(s => <option key={s} value={s}>{s}</option>)}
+                                        </select>
+                                    )}
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-brand-text mb-1">Nama Supplier</label>
+                                <select value={supplier} onChange={e => setSupplier(e.target.value)} className="w-full bg-brand-bg border rounded-lg p-2.5 text-brand-text outline-none focus:border-brand-dark" required>
+                                    <option value="">-- Pilih Supplier --</option>
+                                    {dbSuppliers.map(s => <option key={s.id} value={s.nama}>{s.nama}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-brand-text mb-2">Jenis Bahan</label>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    {['Operasional', 'Bahan Basah', 'Bahan Kering', 'Sewa'].map(jenis => {
+                                        const isChecked = jenisBahan.includes(jenis);
+                                        return (
+                                            <div key={jenis} onClick={() => handleJenisBahanChange(jenis)} 
+                                                className={`flex items-center space-x-3 p-3 rounded-xl border cursor-pointer select-none ${isChecked ? 'bg-slate-800 border-slate-800 text-white shadow-sm' : 'bg-brand-bg text-brand-muted hover:border-slate-400'}`}>
+                                                <div className={`w-5 h-5 rounded border flex items-center justify-center ${isChecked ? 'bg-white border-white' : 'border-slate-400 bg-white'}`}>
+                                                    {isChecked && <svg className="w-3.5 h-3.5 text-brand-dark" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>}
+                                                </div>
+                                                <span className="text-sm font-medium">{jenis}</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-brand-text mb-1">Nama Bahan / Deskripsi</label>
+                                <input type="text" value={namaBahan} onChange={e => setNamaBahan(e.target.value)} className="w-full bg-brand-bg border rounded-lg p-2.5 text-brand-text outline-none focus:border-brand-dark" placeholder="Contoh: Beras Premium..."/>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-brand-text mb-1">Nomor Rekening Bank</label>
+                                <select value={rekening} onChange={e => setRekening(e.target.value)} className="w-full bg-brand-bg border rounded-lg p-2.5 text-brand-text outline-none focus:border-brand-dark" required>
+                                    <option value="">-- Pilih Rekening --</option>
+                                    {dbRekenings.map(r => <option key={r.id} value={r.detail}>{r.detail}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-semibold text-brand-text mb-1">Nominal (Rp)</label>
+                                <div className="relative">
+                                    <span className="absolute left-3 top-2.5 text-slate-500 font-bold">Rp</span>
+                                    <input type="text" inputMode="numeric" value={nominalText} onChange={handleNominalChange} className="w-full bg-brand-bg border rounded-lg p-2.5 pl-11 text-brand-dark font-bold text-lg outline-none focus:border-brand-dark" placeholder="0" required/>
+                                </div>
+                            </div>
+                            <button type="submit" className="w-full py-3.5 bg-brand-bg border-2 border-brand-dark text-brand-dark rounded-xl font-bold hover:bg-brand-dark hover:text-white transition-all">
+                                + Tambah Nota Sementara
+                            </button>
+                        </form>
+                    </div>
+
+                    <div className="bg-white border rounded-2xl p-5 md:p-6 shadow-md flex flex-col">
+                        <h2 className="text-lg font-bold text-brand-dark mb-4 flex justify-between border-b pb-3">
+                            Daftar Nota Input
+                            <span className="bg-brand-gold text-white text-xs px-3 py-1 rounded-full">{draftInvoices.length} Nota</span>
+                        </h2>
+                        <div className="flex-1 overflow-y-auto space-y-3 mb-6 min-h-[300px]">
+                            {draftInvoices.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center h-full text-brand-muted opacity-60 py-10">
+                                    <p className="font-medium text-sm">Belum ada nota ditambahkan.</p>
+                                </div>
+                            ) : (
+                                draftInvoices.map((draft) => (
+                                    <div key={draft.id} className="bg-brand-bg p-4 rounded-xl border relative shadow-sm">
+                                        <button onClick={() => setDraftInvoices(draftInvoices.filter(d => d.id !== draft.id))} className="absolute top-3 right-3 text-red-500 bg-red-100 p-1.5 rounded-lg">X</button>
+                                        <p className="text-xs text-brand-dark font-bold mb-1">{draft.sppg} • {draft.tanggal}</p>
+                                        <p className="text-sm font-bold">{draft.supplier}</p>
+                                        <p className="text-xs text-brand-muted">{draft.jenisBahan.join(', ')}</p>
+                                        <p className="text-lg font-bold text-brand-gold mt-2">{formatRupiah(draft.nominal)}</p>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                        <button onClick={handleKirimSemua} disabled={draftInvoices.length === 0} 
+                            className={`w-full py-3.5 rounded-xl font-bold transition-all ${draftInvoices.length > 0 ? 'bg-brand-dark text-white shadow-lg' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+                            Kirim ke Cloud ({draftInvoices.length})
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        const ProsesTagihanView = ({ dbInvoices, currentUser, onUpdateData }) => {
+            const [filterSPPG, setFilterSPPG] = useState(currentUser.role === 'Operator' ? currentUser.sppg : '');
+            const [filterTanggal, setFilterTanggal] = useState('');
+            const [filterStatus, setFilterStatus] = useState('');
+            const [selectedInvoice, setSelectedInvoice] = useState(null);
+
+            const filtered = dbInvoices.filter(inv => {
+                const matchSPPG = filterSPPG ? inv.sppg === filterSPPG : true;
+                const matchTanggal = filterTanggal ? inv.tanggal === filterTanggal : true;
+                const matchStatus = filterStatus ? inv.status === filterStatus : true;
+                return matchSPPG && matchTanggal && matchStatus;
+            });
+
+            const handleProsesSelesai = async (id) => {
+                await onUpdateData('invoices', id, { status: 'Sudah Proses' });
+                setSelectedInvoice(null);
+            };
+
+            const handleBatalProses = async (id) => {
+                await onUpdateData('invoices', id, { status: 'Belum Proses' });
+                setSelectedInvoice(null);
+            };
+
+            return (
+                <div className="animate-fade-in bg-white rounded-2xl shadow-md p-4 md:p-6 border">
+                    <div className="flex flex-col lg:flex-row justify-between mb-6 gap-4">
+                        <h2 className="text-xl font-serif font-bold text-brand-dark">Proses Pembayaran</h2>
+                        <div className="flex flex-wrap gap-2 w-full lg:w-auto">
+                            {currentUser.role === 'Super Admin' && (
+                                <select value={filterSPPG} onChange={e => setFilterSPPG(e.target.value)} className="bg-brand-bg border rounded-lg p-2 text-sm outline-none">
+                                    <option value="">Semua SPPG</option>
+                                    {SPPG_LIST.map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
+                            )}
+                            <input type="date" value={filterTanggal} onChange={e => setFilterTanggal(e.target.value)} className="bg-brand-bg border rounded-lg p-2 text-sm outline-none" />
+                            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="bg-brand-bg border rounded-lg p-2 text-sm outline-none">
+                                <option value="">Semua Status</option>
+                                <option value="Belum Proses">Belum Proses</option>
+                                <option value="Sudah Proses">Sudah Proses</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="overflow-x-auto rounded-xl border">
+                        <table className="w-full text-left border-collapse min-w-[600px]">
+                            <thead>
+                                <tr className="bg-brand-dark text-white text-sm">
+                                    <th className="p-3">Tanggal</th>
+                                    <th className="p-3">SPPG</th>
+                                    <th className="p-3">Supplier</th>
+                                    <th className="p-3">Nominal</th>
+                                    <th className="p-3">Status</th>
+                                    <th className="p-3 text-center">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filtered.length === 0 ? (
+                                    <tr><td colSpan="6" className="text-center p-8 text-brand-muted bg-brand-bg text-sm">Tidak ada data.</td></tr>
+                                ) : (
+                                    filtered.map((inv, idx) => (
+                                        <tr key={inv.id} className={`border-b ${idx % 2 === 0 ? 'bg-white' : 'bg-brand-bg/30'}`}>
+                                            <td className="p-3 text-sm">{inv.tanggal}</td>
+                                            <td className="p-3 text-sm font-bold text-brand-dark">{inv.sppg}</td>
+                                            <td className="p-3 text-sm">{inv.supplier}</td>
+                                            <td className="p-3 text-sm font-bold text-brand-gold">{formatRupiah(inv.nominal)}</td>
+                                            <td className="p-3">
+                                                <span className={`px-2 py-1 rounded-lg text-xs font-bold whitespace-nowrap ${inv.status === 'Sudah Proses' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                    {inv.status || 'Belum Proses'}
+                                                </span>
+                                            </td>
+                                            <td className="p-3 text-center">
+                                                <button onClick={() => setSelectedInvoice(inv)} className="bg-white border border-brand-dark text-brand-dark hover:bg-brand-dark hover:text-white px-4 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm">
+                                                    Lihat Detail
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {selectedInvoice && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-brand-dark/50 backdrop-blur-sm p-4 animate-fade-in">
+                            <div className="bg-white border rounded-2xl max-w-xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                                <div className="flex justify-between p-5 border-b bg-slate-50">
+                                    <h3 className="text-lg font-serif font-bold text-brand-dark">Detail Pengajuan Tagihan</h3>
+                                    <button onClick={() => setSelectedInvoice(null)} className="text-slate-400 hover:text-red-600 rounded-lg p-1 border border-transparent hover:border-red-200">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                    </button>
+                                </div>
+                                <div className="p-6 space-y-4 overflow-y-auto">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="bg-brand-bg p-4 rounded-xl border shadow-sm"><p className="text-xs text-brand-muted mb-1 font-semibold uppercase">Tanggal</p><p className="font-bold text-sm text-brand-text">{selectedInvoice.tanggal}</p></div>
+                                        <div className="bg-brand-bg p-4 rounded-xl border shadow-sm"><p className="text-xs text-brand-muted mb-1 font-semibold uppercase">Unit SPPG</p><p className="font-bold text-sm text-brand-dark">{selectedInvoice.sppg}</p></div>
+                                    </div>
+                                    <div className="bg-brand-bg p-4 rounded-xl border shadow-sm">
+                                        <p className="text-xs text-brand-muted mb-1 font-semibold uppercase">Supplier & Rekening</p>
+                                        <p className="font-bold text-sm text-brand-text">{selectedInvoice.supplier}</p>
+                                        <p className="text-sm text-slate-600 mt-1 font-mono bg-white p-2 rounded border">{selectedInvoice.rekening}</p>
+                                    </div>
+                                    <div className="bg-brand-bg p-4 rounded-xl border shadow-sm">
+                                        <p className="text-xs text-brand-muted mb-1 font-semibold uppercase">Keterangan Bahan</p>
+                                        <p className="text-sm font-bold text-brand-text">{selectedInvoice.jenisBahan.join(', ')}</p>
+                                        <p className="text-sm text-slate-600 mt-1 italic bg-white p-2 rounded border">{selectedInvoice.namaBahan || '-'}</p>
+                                    </div>
+                                    <div className="bg-brand-dark p-5 rounded-xl shadow-md flex justify-between items-center mt-4">
+                                        <span className="text-sm text-slate-300 font-medium">Nominal Pembayaran</span>
+                                        <span className="text-2xl font-bold text-brand-gold">{formatRupiah(selectedInvoice.nominal)}</span>
+                                    </div>
+                                </div>
+                                <div className="p-5 border-t bg-slate-50 flex justify-end gap-3">
+                                    <button onClick={() => setSelectedInvoice(null)} className="px-6 py-2.5 rounded-lg text-sm font-bold bg-white text-slate-600 border border-slate-300 shadow-sm hover:bg-slate-100">Cancel / Tutup</button>
+                                    {currentUser.role === 'Super Admin' && (
+                                        selectedInvoice.status === 'Sudah Proses' ? (
+                                            <button onClick={() => handleBatalProses(selectedInvoice.id)} className="px-6 py-2.5 rounded-lg text-sm font-bold bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 shadow-sm flex items-center space-x-2">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                                <span>Batal (Belum Proses)</span>
+                                            </button>
+                                        ) : (
+                                            <button onClick={() => handleProsesSelesai(selectedInvoice.id)} className="px-6 py-2.5 rounded-lg text-sm font-bold bg-brand-gold text-white hover:bg-brand-goldHover shadow-md flex items-center space-x-2">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                                <span>Proses Pembayaran</span>
+                                            </button>
+                                        )
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const BkuView = ({ dbInvoices, dbIncomes, currentUser, onAddData, onShowAlert }) => {
+            const [selectedSppgBku, setSelectedSppgBku] = useState(currentUser.role === 'Operator' ? currentUser.sppg : SPPG_LIST[0]);
+            const [showModalIncome, setShowModalIncome] = useState(false);
+            const [incTanggal, setIncTanggal] = useState('');
+            const [incKeterangan, setIncKeterangan] = useState('');
+            const [incNominalText, setIncNominalText] = useState('');
+            const [incNominal, setIncNominal] = useState(0);
+            const [startDate, setStartDate] = useState('');
+            const [endDate, setEndDate] = useState('');
+
+            const handleIncNominalChange = (e) => {
+                const rawValue = e.target.value.replace(/[^0-9]/g, '');
+                setIncNominalText(rawValue ? new Intl.NumberFormat('id-ID').format(rawValue) : '');
+                setIncNominal(parseInt(rawValue, 10) || 0);
+            };
+
+            const handleSimpanUangMasuk = async (e) => {
+                e.preventDefault();
+                if (!incTanggal || !incNominal) { onShowAlert("Tanggal dan nominal wajib diisi!"); return; }
+                await onAddData('manualIncomes', {
+                    sppg: selectedSppgBku, tanggal: incTanggal, keterangan: incKeterangan || 'Pencairan Dana BGN', nominal: incNominal, tipe: 'MASUK'
+                });
+                setShowModalIncome(false);
+                setIncTanggal(''); setIncKeterangan(''); setIncNominalText(''); setIncNominal(0);
+            };
+
+            const pengeluaranList = dbInvoices.filter(inv => inv.sppg === selectedSppgBku && inv.status === 'Sudah Proses')
+                .map(inv => ({ id: inv.id, tanggal: inv.tanggal, keterangan: `Pembayaran ke ${inv.supplier}`, masuk: 0, keluar: inv.nominal, tipe: 'KELUAR' }));
+
+            const pemasukanList = dbIncomes.filter(inc => inc.sppg === selectedSppgBku)
+                .map(inc => ({ id: inc.id, tanggal: inc.tanggal, keterangan: inc.keterangan, masuk: inc.nominal, keluar: 0, tipe: 'MASUK' }));
+
+            const combinedList = [...pemasukanList, ...pengeluaranList].sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal));
+            const filteredList = combinedList.filter(item => (!startDate || item.tanggal >= startDate) && (!endDate || item.tanggal <= endDate));
+
+            let saldoRunning = 0;
+            if (startDate) {
+                combinedList.filter(item => item.tanggal < startDate).forEach(item => { saldoRunning = saldoRunning + item.masuk - item.keluar; });
+            }
+            const bkuRows = filteredList.map(item => { saldoRunning = saldoRunning + item.masuk - item.keluar; return { ...item, saldo: saldoRunning }; });
+
+            const totalMasuk = filteredList.reduce((acc, curr) => acc + curr.masuk, 0);
+            const totalKeluar = filteredList.reduce((acc, curr) => acc + curr.keluar, 0);
+
+            return (
+                <div className="animate-fade-in space-y-4 md:space-y-6">
+                    <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-6 rounded-2xl border shadow-md no-print">
+                        <div>
+                            <h2 className="text-2xl font-serif font-bold text-brand-dark">Buku Kas Umum (BKU)</h2>
+                            <p className="text-sm text-brand-muted mt-1 font-medium">Arus kas masuk & keluar per Dapur/SPPG (Real-Time Cloud).</p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <div>
+                                {currentUser.role === 'Operator' ? (
+                                    <input type="text" value={currentUser.sppg} disabled className="w-full bg-slate-100 border rounded-lg px-3 py-2 text-brand-dark font-bold cursor-not-allowed"/>
+                                ) : (
+                                    <select value={selectedSppgBku} onChange={e => setSelectedSppgBku(e.target.value)} className="bg-brand-bg border rounded-lg px-3 py-2 text-sm outline-none font-bold">
+                                        {SPPG_LIST.map(s => <option key={s} value={s}>{s}</option>)}
+                                    </select>
+                                )}
+                            </div>
+                            <button onClick={() => setShowModalIncome(true)} className="bg-brand-gold hover:bg-brand-goldHover text-white px-5 py-2.5 rounded-xl font-bold shadow-md flex items-center space-x-2 text-sm">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
+                                <span>Uang Masuk</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-4 rounded-xl border shadow-sm flex flex-col lg:flex-row justify-between gap-4 no-print">
+                        <div className="flex items-center gap-3">
+                            <span className="text-sm font-bold">Filter:</span>
+                            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-brand-bg border rounded-lg px-3 py-1.5 text-sm outline-none" />
+                            <span className="text-slate-400 font-bold">s/d</span>
+                            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="bg-brand-bg border rounded-lg px-3 py-1.5 text-sm outline-none" />
+                        </div>
+                        <button onClick={() => window.print()} className="bg-brand-dark hover:bg-slate-800 text-white px-5 py-2 rounded-xl text-sm font-bold shadow-md flex items-center space-x-2">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                            <span>Print PDF</span>
+                        </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6 no-print">
+                        <div className="bg-white p-5 rounded-2xl border-l-4 border-l-green-500 shadow-md">
+                            <p className="text-brand-muted text-sm font-semibold">Total Uang Masuk</p>
+                            <h3 className="text-2xl font-bold text-green-600 mt-1">{formatRupiah(totalMasuk)}</h3>
+                        </div>
+                        <div className="bg-white p-5 rounded-2xl border-l-4 border-l-red-500 shadow-md">
+                            <p className="text-brand-muted text-sm font-semibold">Total Pengeluaran</p>
+                            <h3 className="text-2xl font-bold text-red-600 mt-1">{formatRupiah(totalKeluar)}</h3>
+                        </div>
+                        <div className="bg-white p-5 rounded-2xl border-l-4 border-l-brand-dark shadow-md">
+                            <p className="text-brand-muted text-sm font-semibold">Saldo Kas</p>
+                            <h3 className="text-2xl font-bold text-brand-dark mt-1">{formatRupiah(saldoRunning)}</h3>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-md p-6 border overflow-hidden">
+                        <div className="hidden print-only mb-6 text-center">
+                            <h1 className="text-xl font-bold uppercase">BADAN GIZI NASIONAL (BGN)</h1>
+                            <h2 className="text-lg font-bold border-b-2 inline-block pb-1">BUKU KAS UMUM (BKU) - {selectedSppgBku.toUpperCase()}</h2>
+                            <p className="text-sm mt-2">Periode: {startDate || 'Awal'} s/d {endDate || 'Sekarang'}</p>
+                        </div>
+                        <div className="overflow-x-auto rounded-xl border print:border-none">
+                            <table className="w-full text-left border-collapse print:text-sm min-w-[700px]">
+                                <thead>
+                                    <tr className="bg-brand-dark text-white text-sm print:bg-gray-200 print:text-black">
+                                        <th className="p-3 print:border">Tanggal</th>
+                                        <th className="p-3 print:border">Keterangan</th>
+                                        <th className="p-3 text-right print:border">Pemasukan</th>
+                                        <th className="p-3 text-right print:border">Pengeluaran</th>
+                                        <th className="p-3 text-right print:border">Saldo</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {bkuRows.length === 0 ? (
+                                        <tr><td colSpan="5" className="text-center p-8 text-sm">Belum ada transaksi.</td></tr>
+                                    ) : (
+                                        bkuRows.map((row, idx) => (
+                                            <tr key={idx} className={`border-b text-sm print:border ${idx % 2 === 0 ? 'bg-white' : 'bg-brand-bg/30'}`}>
+                                                <td className="p-3 print:border print:text-black">{row.tanggal}</td>
+                                                <td className="p-3 font-bold print:border print:text-black">{row.keterangan}</td>
+                                                <td className="p-3 text-right font-bold text-green-600 print:border print:text-black">{row.masuk ? formatRupiah(row.masuk) : '-'}</td>
+                                                <td className="p-3 text-right font-bold text-red-600 print:border print:text-black">{row.keluar ? formatRupiah(row.keluar) : '-'}</td>
+                                                <td className="p-3 text-right font-bold text-brand-dark print:border print:text-black">{formatRupiah(row.saldo)}</td>
+                                            </tr>
+                                        ))
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    {showModalIncome && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-brand-dark/50 backdrop-blur-sm p-4 animate-fade-in no-print">
+                            <div className="bg-white border rounded-2xl max-w-md w-full shadow-2xl">
+                                <div className="flex justify-between p-5 border-b bg-slate-50">
+                                    <h3 className="text-lg font-serif font-bold text-brand-dark">Input Dana Masuk ({selectedSppgBku})</h3>
+                                    <button onClick={() => setShowModalIncome(false)} className="text-slate-400 hover:text-red-600">X</button>
+                                </div>
+                                <form onSubmit={handleSimpanUangMasuk} className="p-6 space-y-4">
+                                    <div><label className="block text-sm font-semibold mb-1">Tanggal</label><input type="date" value={incTanggal} onChange={e => setIncTanggal(e.target.value)} className="w-full bg-brand-bg border rounded-lg p-2.5 outline-none" required /></div>
+                                    <div><label className="block text-sm font-semibold mb-1">Keterangan</label><input type="text" value={incKeterangan} onChange={e => setIncKeterangan(e.target.value)} className="w-full bg-brand-bg border rounded-lg p-2.5 outline-none" placeholder="Pencairan BGN..." /></div>
+                                    <div>
+                                        <label className="block text-sm font-semibold mb-1">Nominal (Rp)</label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-2.5 text-slate-500 font-bold">Rp</span>
+                                            <input type="text" inputMode="numeric" value={incNominalText} onChange={handleIncNominalChange} className="w-full bg-brand-bg border rounded-lg p-2.5 pl-11 text-brand-dark font-bold outline-none" required />
+                                        </div>
+                                    </div>
+                                    <div className="pt-3 flex justify-end gap-3">
+                                        <button type="button" onClick={() => setShowModalIncome(false)} className="px-4 py-2 border rounded-lg text-sm shadow-sm">Batal</button>
+                                        <button type="submit" className="px-5 py-2 bg-brand-gold text-white font-bold rounded-lg text-sm shadow-md">Simpan</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const RekapTagihanView = ({ dbInvoices, currentUser, onDeleteData, onShowConfirm }) => {
+            const handleDelete = (id) => {
+                onShowConfirm('Yakin ingin menghapus data tagihan ini dari Cloud Database?', async () => {
+                    await onDeleteData('invoices', id);
+                });
+            };
+            const visibleInvoices = currentUser.role === 'Operator' ? dbInvoices.filter(inv => inv.sppg === currentUser.sppg) : dbInvoices;
+
+            return (
+                <div className="animate-fade-in bg-white rounded-2xl shadow-md p-6 border">
+                    <h2 className="text-2xl font-serif font-bold text-brand-dark mb-6">Rekap Seluruh Tagihan</h2>
+                    <div className="overflow-x-auto rounded-xl border">
+                        <table className="w-full text-left border-collapse min-w-[700px]">
+                            <thead>
+                                <tr className="bg-brand-dark text-white text-sm">
+                                    <th className="p-3">Tgl</th>
+                                    <th className="p-3">SPPG</th>
+                                    <th className="p-3">Supplier</th>
+                                    <th className="p-3">Jenis</th>
+                                    <th className="p-3">Status</th>
+                                    <th className="p-3">Nominal</th>
+                                    <th className="p-3 text-center">Aksi</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {visibleInvoices.length === 0 ? (
+                                    <tr><td colSpan="7" className="text-center p-6 text-sm">Belum ada rekap data.</td></tr>
+                                ) : visibleInvoices.map((inv, idx) => (
+                                    <tr key={inv.id} className={`border-b text-sm ${idx % 2 === 0 ? 'bg-white' : 'bg-brand-bg/30'}`}>
+                                        <td className="p-3">{inv.tanggal}</td>
+                                        <td className="p-3 font-bold text-brand-dark">{inv.sppg}</td>
+                                        <td className="p-3 font-bold">{inv.supplier}</td>
+                                        <td className="p-3">{inv.jenisBahan.join(', ')}</td>
+                                        <td className="p-3"><span className={`text-[10px] px-2 py-1 rounded-lg border ${inv.status === 'Sudah Proses' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{inv.status || 'Belum'}</span></td>
+                                        <td className="p-3 font-bold text-brand-gold">{formatRupiah(inv.nominal)}</td>
+                                        <td className="p-3 text-center">
+                                            <button onClick={() => handleDelete(inv.id)} className="text-red-500 bg-red-50 p-2 rounded-lg">X Hapus</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        };
+
+        const KelolaMasterView = ({ dbSuppliers, dbRekenings, onAddData, onDeleteData, onShowAlert }) => {
+            const [newSupplier, setNewSupplier] = useState('');
+            const [bankPilihan, setBankPilihan] = useState('');
+            const [noRek, setNoRek] = useState('');
+            const [atasNama, setAtasNama] = useState('');
+
+            const handleAddSupplier = async () => {
+                if(newSupplier) { await onAddData('suppliers', { nama: newSupplier }); setNewSupplier(''); }
+            };
+
+            const handleAddRekening = async () => {
+                if(bankPilihan && noRek && atasNama){ 
+                    await onAddData('rekenings', { detail: `${bankPilihan} - ${noRek} a.n ${atasNama}` }); 
+                    setBankPilihan(''); setNoRek(''); setAtasNama(''); 
+                } else { onShowAlert('Lengkapi Bank, No Rekening, dan Atas Nama!'); }
+            };
+
+            return (
+                <div className="animate-fade-in grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="bg-white p-6 rounded-2xl border shadow-md">
+                        <h3 className="text-lg font-bold text-brand-dark mb-4 border-b pb-2">Master Supplier (Cloud)</h3>
+                        <div className="flex gap-2 mb-4">
+                            <input type="text" value={newSupplier} onChange={e=>setNewSupplier(e.target.value)} className="flex-1 bg-brand-bg border rounded-lg p-2 text-sm outline-none" placeholder="Nama Baru..." />
+                            <button onClick={handleAddSupplier} className="bg-brand-dark text-white px-4 rounded-lg font-bold">+</button>
+                        </div>
+                        <ul className="space-y-2 max-h-[200px] overflow-y-auto">
+                            {dbSuppliers.map(s => (
+                                <li key={s.id} className="bg-brand-bg p-3 rounded-lg border text-sm flex justify-between items-center shadow-sm">
+                                    <span className="font-bold">{s.nama}</span>
+                                    <button onClick={()=>onDeleteData('suppliers', s.id)} className="text-red-500 bg-white px-2 py-1 border rounded text-xs">Hapus</button>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-2xl border shadow-md">
+                        <h3 className="text-lg font-bold text-brand-dark mb-4 border-b pb-2">Master Data Rekening Bank (Cloud)</h3>
+                        <div className="grid grid-cols-1 gap-3 mb-5">
+                            <select value={bankPilihan} onChange={e=>setBankPilihan(e.target.value)} className="bg-brand-bg border rounded-lg p-2 text-sm outline-none">
+                                <option value="">Pilih Bank...</option>
+                                {DAFTAR_BANK.map(b => <option key={b} value={b}>{b}</option>)}
+                            </select>
+                            <input type="text" value={noRek} onChange={e=>setNoRek(e.target.value.replace(/\D/g, ''))} className="bg-brand-bg border rounded-lg p-2 text-sm outline-none" placeholder="No Rekening..." />
+                            <input type="text" value={atasNama} onChange={e=>setAtasNama(e.target.value)} className="bg-brand-bg border rounded-lg p-2 text-sm outline-none" placeholder="Atas Nama..." />
+                            <button onClick={handleAddRekening} className="bg-brand-dark text-white py-2 rounded-lg font-bold text-sm">Tambah Rekening</button>
+                        </div>
+                        <div className="grid gap-3 max-h-[250px] overflow-y-auto">
+                            {dbRekenings.map(r => (
+                                <div key={r.id} className="bg-brand-bg p-3 rounded-xl border text-sm flex justify-between items-center shadow-sm">
+                                    <span className="font-mono text-xs font-bold break-words pr-2">{r.detail}</span>
+                                    <button onClick={()=>onDeleteData('rekenings', r.id)} className="text-red-500 bg-white px-2 py-1 border rounded text-xs">Hapus</button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const AkunPenggunaView = ({ dbUsers, onAddData, onDeleteData, onShowAlert, onShowConfirm }) => {
+            const [newUsername, setNewUsername] = useState('');
+            const [newPassword, setNewPassword] = useState('');
+            const [newRole, setNewRole] = useState('Operator');
+            const [newSppgAcc, setNewSppgAcc] = useState(SPPG_LIST[0] || '');
+
+            const handleAddUser = async (e) => {
+                e.preventDefault();
+                if (!newUsername || !newPassword) { onShowAlert("Username dan Password wajib diisi!"); return; }
+                await onAddData('appUsers', { username: newUsername, password: newPassword, role: newRole, sppg: newRole === 'Super Admin' ? 'Semua SPPG' : newSppgAcc });
+                setNewUsername(''); setNewPassword('');
+                onShowAlert("Akun berhasil dibuat dan disimpan di Cloud!");
+            };
+
+            const handleDeleteUser = (id) => {
+                if (dbUsers.length <= 1) { onShowAlert("Minimal harus ada 1 akun dalam sistem!"); return; }
+                onShowConfirm("Yakin ingin menghapus akun ini dari database?", async () => {
+                    await onDeleteData('appUsers', id);
+                });
+            };
+
+            return (
+                <div className="animate-fade-in grid grid-cols-1 xl:grid-cols-3 gap-6">
+                    <div className="bg-white p-6 rounded-2xl border shadow-md h-fit">
+                        <h3 className="text-xl font-serif font-bold text-brand-dark mb-4 border-b pb-2">Buat Akun Baru</h3>
+                        <form onSubmit={handleAddUser} className="space-y-4">
+                            <div><label className="block text-sm font-semibold mb-1">Username</label><input type="text" value={newUsername} onChange={e => setNewUsername(e.target.value)} className="w-full bg-brand-bg border rounded-lg p-2.5 outline-none" required /></div>
+                            <div><label className="block text-sm font-semibold mb-1">Password</label><input type="text" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="w-full bg-brand-bg border rounded-lg p-2.5 outline-none" required /></div>
+                            <div><label className="block text-sm font-semibold mb-1">Role</label>
+                                <select value={newRole} onChange={e => setNewRole(e.target.value)} className="w-full bg-brand-bg border rounded-lg p-2.5 outline-none font-bold">
+                                    <option value="Operator">Operator / Akuntan Dapur</option>
+                                    <option value="Super Admin">Super Admin</option>
+                                </select>
+                            </div>
+                            {newRole === 'Operator' && (
+                                <div><label className="block text-sm font-semibold mb-1">Pilih Dapur</label>
+                                    <select value={newSppgAcc} onChange={e => setNewSppgAcc(e.target.value)} className="w-full bg-brand-bg border rounded-lg p-2.5 outline-none font-bold">
+                                        {SPPG_LIST.map(s => <option key={s} value={s}>{s}</option>)}
+                                    </select>
+                                </div>
+                            )}
+                            <button type="submit" className="w-full py-3 bg-brand-dark text-white font-bold rounded-xl shadow-md">Simpan Akun</button>
+                        </form>
+                    </div>
+                    <div className="bg-white p-6 rounded-2xl border shadow-md xl:col-span-2 overflow-hidden">
+                        <h3 className="text-xl font-serif font-bold text-brand-dark mb-4 border-b pb-2">Daftar Akun Pengguna (Cloud)</h3>
+                        <div className="overflow-x-auto rounded-xl border">
+                            <table className="w-full text-left border-collapse min-w-[600px]">
+                                <thead><tr className="bg-brand-dark text-white text-sm"><th className="p-3">Username</th><th className="p-3">Password</th><th className="p-3">Role</th><th className="p-3">Akses Dapur</th><th className="p-3 text-center">Aksi</th></tr></thead>
+                                <tbody>
+                                    {dbUsers.map((acc, idx) => (
+                                        <tr key={acc.id} className={`border-b text-sm ${idx % 2 === 0 ? 'bg-white' : 'bg-brand-bg/30'}`}>
+                                            <td className="p-3 font-bold">{acc.username}</td>
+                                            <td className="p-3 font-mono text-brand-dark bg-slate-100 font-bold border rounded px-2">{acc.password}</td>
+                                            <td className="p-3"><span className={`px-2 py-1 rounded-lg border text-xs font-bold ${acc.role === 'Super Admin' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>{acc.role}</span></td>
+                                            <td className="p-3 font-medium text-slate-600">{acc.sppg}</td>
+                                            <td className="p-3 text-center"><button onClick={() => handleDeleteUser(acc.id)} className="text-red-500 bg-red-50 px-3 py-1.5 rounded-lg text-xs font-bold">Hapus</button></td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [isFirebaseReady, setIsFirebaseReady] = useState(false);
+            const [isLoggedIn, setIsLoggedIn] = useState(false);
+            const [currentUser, setCurrentUser] = useState(null);
+            const [loginData, setLoginData] = useState({ username: '', password: '' });
+            const [loginError, setLoginError] = useState('');
+            const [activeMenu, setActiveMenu] = useState('dashboard');
+            const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+            const [isMobileOpen, setIsMobileOpen] = useState(false);
+            
+            // Custom Dialog State
+            const [dialog, setDialog] = useState(null);
+
+            // Robust hybrid sync hook for Firestore collections with LocalStorage fallback
+            const useHybridSync = (collectionName) => {
+                const [data, setData] = useState([]);
+                useEffect(() => {
+                    if (!isFirebaseReady) return;
+                    
+                    const loadLocal = () => {
+                        try {
+                            const localData = localStorage.getItem(`bgn_${collectionName}`);
+                            if (localData) setData(JSON.parse(localData));
+                        } catch(e) {}
+                    };
+
+                    if (window.firebaseAPI && !window.firebaseFallback) {
+                        try {
+                            const { db, appId, collection, onSnapshot } = window.firebaseAPI;
+                            const colRef = collection(db, 'artifacts', appId, 'public', 'data', collectionName);
+                            const unsubscribe = onSnapshot(colRef, (snapshot) => {
+                                const items = [];
+                                snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
+                                setData(items);
+                                try { localStorage.setItem(`bgn_${collectionName}`, JSON.stringify(items)); } catch(e) {}
+                            }, (err) => {
+                                console.warn(`Firestore sync note for ${collectionName}:`, err.message);
+                                loadLocal();
+                            });
+                            return () => unsubscribe();
+                        } catch (err) {
+                            loadLocal();
+                        }
+                    } else {
+                        loadLocal();
+                    }
+
+                    const handleLocalChange = () => {
+                        loadLocal();
+                    };
+                    window.addEventListener(`localUpdate_${collectionName}`, handleLocalChange);
+                    return () => window.removeEventListener(`localUpdate_${collectionName}`, handleLocalChange);
+                }, [isFirebaseReady, collectionName]);
+                return data;
+            };
+
+            useEffect(() => {
+                if (window.firebaseAPI || window.firebaseFallback) setIsFirebaseReady(true);
+                
+                const handleFbReady = () => setIsFirebaseReady(true);
+                window.addEventListener('firebase-ready', handleFbReady);
+                
+                const failsafeTimer = setTimeout(() => setIsFirebaseReady(true), 1500);
+                
+                const handleResize = () => {
+                    if (window.innerWidth < 768) { setIsSidebarCollapsed(true); setIsMobileOpen(false); } 
+                    else { setIsSidebarCollapsed(false); }
+                };
+                window.addEventListener('resize', handleResize);
+                handleResize();
+                
+                return () => { 
+                    window.removeEventListener('firebase-ready', handleFbReady); 
+                    window.removeEventListener('resize', handleResize); 
+                    clearTimeout(failsafeTimer);
+                };
+            }, []);
+
+            // Subscribe to cloud/hybrid collections
+            const dbInvoices = useHybridSync('invoices');
+            const dbIncomes = useHybridSync('manualIncomes');
+            const dbSuppliers = useHybridSync('suppliers');
+            const dbRekenings = useHybridSync('rekenings');
+            const dbUsers = useHybridSync('appUsers');
+
+            // Data Mutators with Fallback Sync
+            const handleAddData = async (colName, data) => {
+                if(window.firebaseAPI && !window.firebaseFallback) {
+                    try {
+                        const { db, appId, collection, addDoc } = window.firebaseAPI;
+                        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', colName), data);
+                        return;
+                    } catch(err) {
+                        console.warn("Firestore add failed, using local fallback:", err);
+                    }
+                }
+                const existing = JSON.parse(localStorage.getItem(`bgn_${colName}`) || '[]');
+                existing.push({ id: Date.now().toString(), ...data });
+                localStorage.setItem(`bgn_${colName}`, JSON.stringify(existing));
+                window.dispatchEvent(new Event(`localUpdate_${colName}`));
+            };
+
+            const handleUpdateData = async (colName, id, data) => {
+                if(window.firebaseAPI && !window.firebaseFallback) {
+                    try {
+                        const { db, appId, doc, updateDoc } = window.firebaseAPI;
+                        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', colName, id), data);
+                        return;
+                    } catch(err) {
+                        console.warn("Firestore update failed, using local fallback:", err);
+                    }
+                }
+                let existing = JSON.parse(localStorage.getItem(`bgn_${colName}`) || '[]');
+                existing = existing.map(item => item.id === id ? { ...item, ...data } : item);
+                localStorage.setItem(`bgn_${colName}`, JSON.stringify(existing));
+                window.dispatchEvent(new Event(`localUpdate_${colName}`));
+            };
+
+            const handleDeleteData = async (colName, id) => {
+                if(window.firebaseAPI && !window.firebaseFallback) {
+                    try {
+                        const { db, appId, doc, deleteDoc } = window.firebaseAPI;
+                        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', colName, id));
+                        return;
+                    } catch(err) {
+                        console.warn("Firestore delete failed, using local fallback:", err);
+                    }
+                }
+                let existing = JSON.parse(localStorage.getItem(`bgn_${colName}`) || '[]');
+                existing = existing.filter(item => item.id !== id);
+                localStorage.setItem(`bgn_${colName}`, JSON.stringify(existing));
+                window.dispatchEvent(new Event(`localUpdate_${colName}`));
+            };
+
+            const handleLogin = (e) => {
+                e.preventDefault();
+                let found = dbUsers.find(u => u.username === loginData.username && u.password === loginData.password);
+                
+                if (!found && loginData.username === 'admin' && loginData.password === 'bgn') {
+                    found = { id: 'admin-default', username: 'admin', role: 'Super Admin', sppg: 'Semua SPPG' };
+                }
+
+                if (found) {
+                    setIsLoggedIn(true); setCurrentUser(found); setLoginError('');
+                    setActiveMenu(found.role === 'Operator' ? 'tagihan' : 'dashboard');
+                } else { setLoginError('Username atau Password salah!'); }
+            };
+
+            if (!isFirebaseReady) {
+                return (
+                    <div className="flex h-screen items-center justify-center bg-brand-bg text-brand-dark font-bold animate-pulse flex-col">
+                        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Logo_Badan_Gizi_Nasional.png/600px-Logo_Badan_Gizi_Nasional.png" alt="Loading" className="w-20 h-20 mb-4 opacity-50" onError={(e)=>{e.target.style.display='none'}}/>
+                        <p>Menghubungkan ke Sistem...</p>
+                    </div>
+                );
+            }
+
+            if (!isLoggedIn) {
+                return (
+                    <div className="relative min-h-screen flex items-center justify-center bg-brand-bg px-4 overflow-hidden">
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.08]">
+                            <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Logo_Badan_Gizi_Nasional.png/600px-Logo_Badan_Gizi_Nasional.png" 
+                                alt="Logo BGN Background" className="w-[500px] h-[500px] object-contain" 
+                                onError={(e)=>{e.target.style.display='none'}}/>
+                        </div>
+                        <div className="relative z-10 bg-white p-8 rounded-2xl border-t-[6px] border-t-brand-dark shadow-2xl max-w-md w-full animate-fade-in">
+                            <div className="text-center mb-8">
+                                <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Logo_Badan_Gizi_Nasional.png/600px-Logo_Badan_Gizi_Nasional.png" 
+                                     alt="Logo BGN" className="w-24 h-24 mx-auto mb-4 object-contain drop-shadow" 
+                                     onError={(e)=>{e.target.src='https://placehold.co/150x150/0f172a/ffffff?text=BGN'}}/>
+                                <h1 className="text-3xl font-serif font-bold text-brand-dark">BGN AL GHAZALI</h1>
+                                <p className="text-brand-muted mt-2 text-sm font-medium">Sistem Informasi Keuangan</p>
+                            </div>
+                            <form onSubmit={handleLogin} className="space-y-5">
+                                {loginError && <div className="bg-red-50 text-red-600 font-bold p-3 rounded-lg text-sm text-center shadow-sm">{loginError}</div>}
+                                <div><label className="block text-brand-text font-bold text-sm mb-1.5">Username</label><input type="text" value={loginData.username} onChange={(e) => setLoginData({...loginData, username: e.target.value})} className="w-full bg-brand-bg border rounded-xl p-3.5 outline-none focus:border-brand-dark font-medium" required /></div>
+                                <div><label className="block text-brand-text font-bold text-sm mb-1.5">Password</label><input type="password" value={loginData.password} onChange={(e) => setLoginData({...loginData, password: e.target.value})} className="w-full bg-brand-bg border rounded-xl p-3.5 outline-none focus:border-brand-dark font-medium" required /></div>
+                                <button type="submit" className="w-full bg-brand-dark text-white font-bold py-3.5 rounded-xl shadow-lg hover:bg-slate-800 transition-all text-lg mt-2">LOGIN</button>
+                            </form>
+                        </div>
+                    </div>
+                );
+            }
+
+            const allMenus = [
+                { id: 'dashboard', label: 'Dashboard', roles: ['Super Admin'], icon: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z' },
+                { id: 'tagihan', label: 'Input Tagihan', roles: ['Super Admin', 'Operator'], icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+                { id: 'proses', label: 'Proses Tagihan', roles: ['Super Admin', 'Operator'], icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4' },
+                { id: 'bku', label: 'Buku Kas (BKU)', roles: ['Super Admin', 'Operator'], icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
+                { id: 'rekap', label: 'Rekap Tagihan', roles: ['Super Admin'], icon: 'M4 4h16v16H4z M4 9h16 M9 4v16' },
+                { id: 'master', label: 'Master Data', roles: ['Super Admin', 'Operator'], icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
+                { id: 'users', label: 'Akun Pengguna', roles: ['Super Admin'], icon: 'M12 43v1m0 0H9a6 6 0 016-6v0a6 6 0 016 6h-3m-6 0a6 6 0 100-12 6 6 0 000 12z' }
+            ];
+            const allowedMenus = allMenus.filter(m => m.roles.includes(currentUser.role));
+
+            return (
+                <div className="flex h-screen bg-brand-bg overflow-hidden relative">
+                    <CustomDialog dialog={dialog} onClose={() => setDialog(null)} />
+                    
+                    {isMobileOpen && <div onClick={() => setIsMobileOpen(false)} className="fixed inset-0 bg-black/50 z-20 md:hidden backdrop-blur-sm"></div>}
+
+                    <div className={`bg-brand-sidebar text-white shadow-xl z-30 flex flex-col no-print border-r transition-all duration-300 ease-in-out absolute md:relative h-full
+                        ${isMobileOpen ? 'translate-x-0 w-64' : '-translate-x-full md:translate-x-0'} 
+                        ${!isMobileOpen && isSidebarCollapsed ? 'md:w-[80px]' : 'md:w-64'}`}>
+                        <div className={`p-4 text-center border-b border-white/10 bg-black/20 flex flex-col items-center justify-center transition-all ${!isMobileOpen && isSidebarCollapsed ? 'h-[72px] md:h-16 py-2' : ''}`}>
+                            <div className={`bg-white rounded-full flex items-center justify-center shadow-lg transition-all ${!isMobileOpen && isSidebarCollapsed ? 'w-10 h-10 p-1 mb-0' : 'w-16 h-16 p-2 mx-auto mb-3'}`}>
+                                <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Logo_Badan_Gizi_Nasional.png/600px-Logo_Badan_Gizi_Nasional.png" alt="BGN" className="w-full h-full object-contain" onError={(e)=>{e.target.src='https://placehold.co/150x150/0f172a/ffffff?text=BGN'}}/>
+                            </div>
+                            {(!isSidebarCollapsed || isMobileOpen) && <h1 className="font-serif font-bold text-brand-gold text-base md:text-lg">BGN<br/>AL GHAZALI</h1>}
+                        </div>
+                        <div className="flex-1 p-3 space-y-2 overflow-y-auto mt-2">
+                            {allowedMenus.map(item => (
+                                <button key={item.id} onClick={() => { setActiveMenu(item.id); if(window.innerWidth < 768) setIsMobileOpen(false); }} title={(!isMobileOpen && isSidebarCollapsed) ? item.label : ''}
+                                    className={`w-full flex items-center ${(!isMobileOpen && isSidebarCollapsed) ? 'justify-center px-0' : 'space-x-3 px-4'} py-3.5 rounded-xl font-medium ${activeMenu === item.id ? 'bg-brand-primary text-brand-dark shadow-md' : 'text-slate-400 hover:bg-white/10 hover:text-white'}`}>
+                                    <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={item.icon} /></svg>
+                                    {(!isSidebarCollapsed || isMobileOpen) && <span className="text-sm truncate">{item.label}</span>}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="p-4 border-t border-white/10 bg-black/10">
+                            <button onClick={() => { setIsLoggedIn(false); setCurrentUser(null); }} title={(!isMobileOpen && isSidebarCollapsed) ? 'Logout' : ''}
+                                className={`w-full flex justify-center items-center space-x-2 bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white rounded-xl text-sm font-bold ${(!isMobileOpen && isSidebarCollapsed) ? 'p-3' : 'py-3'}`}>
+                                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+                                {(!isSidebarCollapsed || isMobileOpen) && <span>Logout</span>}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
+                        <header className="bg-white border-b h-16 flex items-center justify-between px-4 md:px-8 shadow-sm z-10 no-print flex-shrink-0">
+                            <div className="flex items-center space-x-3 md:space-x-4">
+                                <button onClick={() => { if(window.innerWidth < 768) setIsMobileOpen(!isMobileOpen); else setIsSidebarCollapsed(!isSidebarCollapsed); }} className="p-2 text-brand-dark rounded-lg hover:bg-slate-100">
+                                    <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
+                                </button>
+                                <h2 className="text-base md:text-xl font-bold text-brand-dark hidden sm:block">
+                                    {activeMenu === 'dashboard' && 'Dashboard Utama'} {activeMenu === 'tagihan' && 'Form Pengajuan Tagihan'}
+                                    {activeMenu === 'proses' && 'Antrean Pembayaran'} {activeMenu === 'bku' && 'Buku Kas Umum (BKU)'}
+                                    {activeMenu === 'rekap' && 'Rekapitulasi Tagihan'} {activeMenu === 'master' && 'Kelola Master Data'}
+                                    {activeMenu === 'users' && 'Akun Pengguna'}
+                                </h2>
+                            </div>
+                            <div className="flex items-center space-x-3">
+                                <div className="text-right hidden sm:block"><p className="text-sm font-bold leading-tight">{currentUser.username}</p><p className="text-[10px] text-brand-gold font-medium">{currentUser.role}</p></div>
+                                <div className="w-9 h-9 md:w-10 md:h-10 bg-brand-dark rounded-full shadow-md flex items-center justify-center text-white font-bold text-sm md:text-base">{currentUser.username.substring(0, 2).toUpperCase()}</div>
+                            </div>
+                        </header>
+
+                        <main className="flex-1 overflow-y-auto p-4 md:p-8 z-0">
+                            {activeMenu === 'dashboard' && <DashboardView dbInvoices={dbInvoices} currentUser={currentUser} />}
+                            {activeMenu === 'tagihan' && <InputTagihanView dbSuppliers={dbSuppliers} dbRekenings={dbRekenings} setActiveMenu={setActiveMenu} currentUser={currentUser} onAddData={handleAddData} onShowAlert={(msg) => setDialog({message: msg, type:'alert'})} />}
+                            {activeMenu === 'proses' && <ProsesTagihanView dbInvoices={dbInvoices} currentUser={currentUser} onUpdateData={handleUpdateData} />}
+                            {activeMenu === 'bku' && <BkuView dbInvoices={dbInvoices} dbIncomes={dbIncomes} currentUser={currentUser} onAddData={handleAddData} onShowAlert={(msg) => setDialog({message: msg, type:'alert'})} />}
+                            {activeMenu === 'rekap' && <RekapTagihanView dbInvoices={dbInvoices} currentUser={currentUser} onDeleteData={handleDeleteData} onShowConfirm={(msg, action) => setDialog({message: msg, type: 'confirm', onConfirm: action})} />}
+                            {activeMenu === 'master' && <KelolaMasterView dbSuppliers={dbSuppliers} dbRekenings={dbRekenings} onAddData={handleAddData} onDeleteData={handleDeleteData} onShowAlert={(msg) => setDialog({message: msg, type:'alert'})} />}
+                            {activeMenu === 'users' && <AkunPenggunaView dbUsers={dbUsers} onAddData={handleAddData} onDeleteData={handleDeleteData} onShowAlert={(msg) => setDialog({message: msg, type:'alert'})} onShowConfirm={(msg, action) => setDialog({message: msg, type: 'confirm', onConfirm: action})} />}
+                        </main>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
